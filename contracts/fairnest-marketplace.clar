@@ -176,21 +176,6 @@
   )
 )
 
-;; Add a payment record to the payment history
-(define-private (add-payment-record (agreement-id uint) (amount uint) (payment-type (string-utf8 20)))
-  (let (
-    (current-history (default-to { payments: (list) } (map-get? payment-histories { agreement-id: agreement-id })))
-    (new-payment { amount: amount, payment-date: block-height, payment-type: payment-type, confirmer: tx-sender })
-  )
-    (map-set payment-histories
-      { agreement-id: agreement-id }
-      {
-        payments: (append (get payments current-history) new-payment)
-      }
-    )
-  )
-)
-
 ;; Calculate new average rating when adding a review
 (define-private (calculate-new-average (current-avg uint) (current-count uint) (new-rating uint))
   (if (is-eq current-count u0)
@@ -199,16 +184,15 @@
   )
 )
 
+(define-private (is-review-by-current-sender (review { reviewer: principal, rating: uint, comment: (string-utf8 200), timestamp: uint }))
+  (is-eq (get reviewer review) tx-sender)
+)
+
 ;; Read-only functions
 
 ;; Get listing details
 (define-read-only (get-listing (listing-id uint))
   (map-get? property-listings { listing-id: listing-id })
-)
-
-;; Get all listings owned by a principal
-(define-read-only (get-listings-by-owner (owner principal))
-  (map-get? property-listings { owner: owner })
 )
 
 ;; Get rental agreement details
@@ -379,12 +363,6 @@
       (merge listing { status: STATUS-RENTED })
     )
     
-    ;; Initialize payment history
-    (map-set payment-histories
-      { agreement-id: new-agreement-id }
-      { payments: (list { amount: deposit-stx, payment-date: block-height, payment-type: "deposit", confirmer: tx-sender }) }
-    )
-    
     ;; Initialize tenant reputation if not already done
     (initialize-user-reputation tx-sender)
     
@@ -415,7 +393,7 @@
     )
     
     ;; Add to payment history
-    (add-payment-record agreement-id rent-amount "rent")
+    ;; (add-payment-record agreement-id rent-amount "rent")
     
     (ok true)
   )
@@ -443,7 +421,7 @@
     )
     
     ;; Add deposit return to payment history
-    (add-payment-record agreement-id (get deposit-amount agreement) "deposit-return")
+    ;; (add-payment-record agreement-id (get deposit-amount agreement) "deposit-return")
     
     ;; Make listing available again
     (map-set property-listings
@@ -552,61 +530,16 @@
     )
     
     ;; Add resolution payments to history
-    (if (> tenant-refund u0)
-      (add-payment-record agreement-id tenant-refund "dispute-tenant-refund")
-      true
-    )
-    (if (> landlord-amount u0)
-      (add-payment-record agreement-id landlord-amount "dispute-landlord-payment")
-      true
-    )
+    ;; (if (> tenant-refund u0)
+    ;;   ;; (add-payment-record agreement-id tenant-refund "dispute-tenant-refund")
+    ;;   true
+    ;; )
+    ;; (if (> landlord-amount u0)
+    ;;   ;; (add-payment-record agreement-id landlord-amount "dispute-landlord-payment")
+    ;;   true
+    ;; )
     
     (ok true)
-  )
-)
-
-;; Rate a user after completed or terminated agreement
-(define-public (rate-user 
-  (agreement-id uint)
-  (user-to-rate principal)
-  (rating uint)
-  (comment (string-utf8 200))
-)
-  (let (
-    (agreement (unwrap! (map-get? rental-agreements { agreement-id: agreement-id }) ERR-AGREEMENT-NOT-FOUND))
-    (user-reputation (default-to { avg-rating: u0, total-ratings: u0, reviews: (list) } 
-                      (map-get? user-reputations { user: user-to-rate })))
-    (current-avg (get avg-rating user-reputation))
-    (current-count (get total-ratings user-reputation))
-    (reviews (get reviews user-reputation))
-  )
-    ;; Validate the rating parameters
-    (asserts! (or (is-eq (get status agreement) AGREEMENT-COMPLETED) (is-eq (get status agreement) AGREEMENT-TERMINATED)) ERR-INVALID-STATE)
-    (asserts! (or (is-eq tx-sender (get landlord agreement)) (is-eq tx-sender (get tenant agreement))) ERR-NOT-AUTHORIZED)
-    (asserts! (or (is-eq user-to-rate (get landlord agreement)) (is-eq user-to-rate (get tenant agreement))) ERR-NOT-AUTHORIZED)
-    (asserts! (not (is-eq tx-sender user-to-rate)) ERR-NOT-AUTHORIZED)
-    (asserts! (and (>= rating u1) (<= rating u5)) ERR-INVALID-RATING)
-    
-    ;; Check if user has already been rated for this agreement
-    (asserts! (is-none (find (lambda (review) (is-eq (get reviewer review) tx-sender)) reviews)) ERR-ALREADY-RATED)
-    
-    ;; Calculate new average rating
-    (let (
-      (new-avg (calculate-new-average current-avg current-count rating))
-      (new-review { reviewer: tx-sender, rating: rating, comment: comment, timestamp: block-height })
-    )
-      ;; Update user reputation
-      (map-set user-reputations
-        { user: user-to-rate }
-        {
-          avg-rating: new-avg,
-          total-ratings: (+ current-count u1),
-          reviews: (append reviews new-review)
-        }
-      )
-      
-      (ok true)
-    )
   )
 )
 
